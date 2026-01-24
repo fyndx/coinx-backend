@@ -1,0 +1,127 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Enums
+enum TransactionType {
+  Income
+  Expense
+}
+
+// Models
+
+model Transaction {
+  id              String          @id @default(uuid())
+  transactionTime DateTime        @map("transaction_time")
+  amount          Decimal         @db.Decimal(10, 2)
+  note            String?
+  transactionType TransactionType @map("transaction_type")
+
+  categoryId String   @map("category_id")
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  @@map("coinx_transaction")
+}
+
+model Category {
+  id    String          @id @default(uuid())
+  name  String          @unique
+  icon  String          @unique
+  color String          @unique
+  type  TransactionType
+
+  transactions Transaction[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  @@map("coinx_category")
+}
+
+model Product {
+  id                  String  @id @default(uuid())
+  name                String
+  image               String?
+  notes               String?
+  defaultUnitCategory String  @map("default_unit_category")
+
+  productListings        ProductListing[]
+  productListingsHistory ProductListingHistory[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("coinx_product")
+}
+
+model Store {
+  id       String  @id @default(uuid())
+  name     String  @unique
+  location String?
+
+  productListings ProductListing[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  // Unique constraint on name and location combined
+  @@unique([name, location], name: "unique_store_name_location")
+  @@map("coinx_store")
+}
+
+model ProductListing {
+  id String @id @default(uuid())
+
+  productId String  @map("product_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  name String // name of the product at this specific store
+
+  storeId String @map("store_id")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  url      String?
+  price    Decimal // Using Decimal for precision
+  quantity Float
+  unit     String
+
+  history ProductListingHistory[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  @@index([productId])
+  @@index([storeId])
+  @@map("coinx_product_listing")
+}
+
+model ProductListingHistory {
+  id String @id @default(uuid())
+
+  productId String  @map("product_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  productListingId String         @map("product_listing_id")
+  productListing   ProductListing @relation(fields: [productListingId], references: [id], onDelete: Cascade)
+
+  price      Decimal
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  @@index([productId])
+  @@index([productListingId])
+  @@index([recordedAt])
+  @@map("coinx_product_listing_history")
+}
