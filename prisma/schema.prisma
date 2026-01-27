@@ -7,6 +7,44 @@ datasource db {
   provider = "postgresql"
 }
 
+// ─── User & Device ───────────────────────────────────────────
+
+model Profile {
+  id          String    @id @db.Uuid // matches Supabase auth.users(id)
+  email       String?   @unique
+  displayName String?   @map("display_name")
+  avatarUrl   String?   @map("avatar_url")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime? @updatedAt @map("updated_at")
+
+  devices              Device[]
+  transactions         Transaction[]
+  categories           Category[]
+  products             Product[]
+  stores               Store[]
+  productListings      ProductListing[]
+  productListingHistory ProductListingHistory[]
+
+  @@map("profiles")
+}
+
+model Device {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  deviceName String?   @map("device_name")
+  platform   String?   // 'ios' | 'android'
+  appVersion String?   @map("app_version")
+  lastSyncAt DateTime? @map("last_sync_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("devices")
+}
+
+// ─── Core Tables ─────────────────────────────────────────────
+
 model Transaction {
   id              String          @id @default(uuid())
   transactionTime DateTime        @map("transaction_time")
@@ -16,81 +54,144 @@ model Transaction {
   categoryId      String          @map("category_id")
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime?       @updatedAt @map("updated_at")
-  category        Category        @relation(fields: [categoryId], references: [id])
 
+  // Sync fields
+  userId      String?   @map("user_id") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+  syncVersion Int       @default(0) @map("sync_version")
+
+  category Category @relation(fields: [categoryId], references: [id])
+  user     Profile? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([updatedAt])
+  @@index([deletedAt])
   @@map("coinx_transaction")
 }
 
 model Category {
   id           String          @id @default(uuid())
-  name         String          @unique
-  icon         String          @unique
-  color        String          @unique
+  name         String
+  icon         String
+  color        String
   type         TransactionType
   createdAt    DateTime        @default(now()) @map("created_at")
   updatedAt    DateTime?       @updatedAt @map("updated_at")
-  transactions Transaction[]
 
+  // Sync fields
+  userId      String?   @map("user_id") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+  syncVersion Int       @default(0) @map("sync_version")
+
+  transactions Transaction[]
+  user         Profile?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([name, userId], name: "unique_category_name_per_user")
+  @@index([userId])
+  @@index([updatedAt])
+  @@index([deletedAt])
   @@map("coinx_category")
 }
 
 model Product {
-  id                     String                  @id @default(uuid())
-  name                   String
-  image                  String?
-  notes                  String?
-  defaultUnitCategory    String                  @map("default_unit_category")
-  createdAt              DateTime                @default(now()) @map("created_at")
+  id                  String  @id @default(uuid())
+  name                String
+  image               String?
+  notes               String?
+  defaultUnitCategory String  @map("default_unit_category")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime? @updatedAt @map("updated_at")
+
+  // Sync fields
+  userId      String?   @map("user_id") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+  syncVersion Int       @default(0) @map("sync_version")
+
   productListings        ProductListing[]
   productListingsHistory ProductListingHistory[]
+  user                   Profile?               @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@index([userId])
+  @@index([updatedAt])
+  @@index([deletedAt])
   @@map("coinx_product")
 }
 
 model Store {
-  id              String           @id @default(uuid())
-  name            String           @unique
-  location        String?
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime?        @updatedAt @map("updated_at")
-  productListings ProductListing[]
+  id       String  @id @default(uuid())
+  name     String
+  location String?
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
 
-  @@unique([name, location], name: "unique_store_name_location")
+  // Sync fields
+  userId      String?   @map("user_id") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+  syncVersion Int       @default(0) @map("sync_version")
+
+  productListings ProductListing[]
+  user            Profile?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([name, location, userId], name: "unique_store_name_location_per_user")
+  @@index([userId])
+  @@index([updatedAt])
+  @@index([deletedAt])
   @@map("coinx_store")
 }
 
 model ProductListing {
-  id        String                  @id @default(uuid())
-  productId String                  @map("product_id")
+  id        String  @id @default(uuid())
+  productId String  @map("product_id")
   name      String
-  storeId   String                  @map("store_id")
+  storeId   String  @map("store_id")
   url       String?
   price     Decimal
   quantity  Float
   unit      String
-  createdAt DateTime                @default(now()) @map("created_at")
-  updatedAt DateTime?               @updatedAt @map("updated_at")
-  product   Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
-  store     Store                   @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  history   ProductListingHistory[]
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  // Sync fields
+  userId      String?   @map("user_id") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+  syncVersion Int       @default(0) @map("sync_version")
+
+  product Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  store   Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  history ProductListingHistory[]
+  user    Profile?       @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([productId])
   @@index([storeId])
+  @@index([userId])
+  @@index([updatedAt])
+  @@index([deletedAt])
   @@map("coinx_product_listing")
 }
 
 model ProductListingHistory {
-  id               String         @id @default(uuid())
-  productId        String         @map("product_id")
-  productListingId String         @map("product_listing_id")
+  id               String  @id @default(uuid())
+  productId        String  @map("product_id")
+  productListingId String  @map("product_listing_id")
   price            Decimal
-  recordedAt       DateTime       @default(now()) @map("recorded_at")
-  product          Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
-  productListing   ProductListing @relation(fields: [productListingId], references: [id], onDelete: Cascade)
+  recordedAt       DateTime @default(now()) @map("recorded_at")
+  updatedAt        DateTime? @updatedAt @map("updated_at")
+
+  // Sync fields
+  userId      String?   @map("user_id") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+  syncVersion Int       @default(0) @map("sync_version")
+
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productListing ProductListing @relation(fields: [productListingId], references: [id], onDelete: Cascade)
+  user           Profile?       @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([productId])
   @@index([productListingId])
   @@index([recordedAt])
+  @@index([userId])
+  @@index([updatedAt])
+  @@index([deletedAt])
   @@map("coinx_product_listing_history")
 }
 
