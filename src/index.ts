@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { healthRoutes } from "./routes/health";
+import { authRoutes } from "./routes/auth";
 import { env } from "./lib/env";
 import { AppError } from "./lib/errors";
 
@@ -57,6 +58,7 @@ const app = new Elysia()
 		};
 	})
 	.use(healthRoutes)
+	.use(authRoutes)
 	.listen(env.PORT);
 
 console.log(
