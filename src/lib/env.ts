@@ -20,9 +20,9 @@ export const env = {
 	// Database
 	DATABASE_URL: requireEnv("DATABASE_URL"),
 
-	// Supabase
-	SUPABASE_URL: process.env.SUPABASE_URL ?? "",
-	SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY ?? "",
-	SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-	SUPABASE_JWT_SECRET: process.env.SUPABASE_JWT_SECRET ?? "",
+	// Supabase (required in production, optional in dev)
+	SUPABASE_URL: optionalEnv("SUPABASE_URL", ""),
+	SUPABASE_ANON_KEY: optionalEnv("SUPABASE_ANON_KEY", ""),
+	SUPABASE_SERVICE_ROLE_KEY: optionalEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+	SUPABASE_JWT_SECRET: optionalEnv("SUPABASE_JWT_SECRET", ""),
 } as const;

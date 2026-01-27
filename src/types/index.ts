@@ -1,9 +1,6 @@
 // Shared types for CoinX Backend
-
-export interface AuthUser {
-	id: string;
-	email?: string;
-}
+// AuthUser is defined in src/middleware/auth.ts
+export type { AuthUser } from "../middleware/auth";
 
 export interface SyncMeta {
 	deviceId: string;
