@@ -1,5 +1,6 @@
 import { Elysia } from "elysia";
 import { jwtVerify } from "jose";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env } from "../lib/env";
 import { Errors } from "../lib/errors";
 
@@ -49,6 +50,25 @@ async function verifyToken(token: string): Promise<AuthUser> {
 }
 
 /**
+ * Create a per-request Supabase client using the user's JWT.
+ * This client respects RLS policies — Postgres enforces row-level access.
+ * Use this for all user-facing data queries.
+ */
+function createUserClient(accessToken: string): SupabaseClient {
+	return createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+		global: {
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+			},
+		},
+		auth: {
+			autoRefreshToken: false,
+			persistSession: false,
+		},
+	});
+}
+
+/**
  * Extract Bearer token from Authorization header.
  */
 function extractBearerToken(header: string | null | undefined): string | null {
@@ -71,14 +91,15 @@ function extractBearerToken(header: string | null | undefined): string | null {
  */
 export const authPlugin = new Elysia({ name: "auth" }).derive(
 	{ as: "scoped" },
-	async ({ headers }): Promise<{ user: AuthUser }> => {
+	async ({ headers }): Promise<{ user: AuthUser; supabase: SupabaseClient }> => {
 		const token = extractBearerToken(headers.authorization);
 		if (!token) {
 			throw Errors.unauthorized("Missing Authorization header");
 		}
 
 		const user = await verifyToken(token);
-		return { user };
+		const supabase = createUserClient(token);
+		return { user, supabase };
 	},
 );
 
@@ -88,17 +109,20 @@ export const authPlugin = new Elysia({ name: "auth" }).derive(
  */
 export const optionalAuthPlugin = new Elysia({ name: "optional-auth" }).derive(
 	{ as: "scoped" },
-	async ({ headers }): Promise<{ user: AuthUser | null }> => {
+	async ({
+		headers,
+	}): Promise<{ user: AuthUser | null; supabase: SupabaseClient | null }> => {
 		const token = extractBearerToken(headers.authorization);
 		if (!token) {
-			return { user: null };
+			return { user: null, supabase: null };
 		}
 
 		try {
 			const user = await verifyToken(token);
-			return { user };
+			const supabase = createUserClient(token);
+			return { user, supabase };
 		} catch {
-			return { user: null };
+			return { user: null, supabase: null };
 		}
 	},
 );
