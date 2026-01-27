@@ -3,21 +3,34 @@ import { prisma } from "../lib/prisma";
 
 export const healthRoutes = new Elysia({ prefix: "/api" }).get(
 	"/health",
-	async () => {
-		let dbStatus = "disconnected";
+	async ({ set }) => {
+		let dbStatus: "connected" | "disconnected" | "error" = "disconnected";
+		let dbLatencyMs: number | null = null;
 
 		try {
+			const start = Date.now();
 			await prisma.$queryRaw`SELECT 1`;
+			dbLatencyMs = Date.now() - start;
 			dbStatus = "connected";
-		} catch {
+		} catch (error) {
 			dbStatus = "error";
+			console.error("[Health Check] Database connection failed:", error);
+		}
+
+		const healthy = dbStatus === "connected";
+
+		if (!healthy) {
+			set.status = 503;
 		}
 
 		return {
-			status: "ok",
+			status: healthy ? "ok" : "degraded",
 			service: "coinx-backend",
 			timestamp: new Date().toISOString(),
-			database: dbStatus,
+			database: {
+				status: dbStatus,
+				latencyMs: dbLatencyMs,
+			},
 		};
 	},
 );
