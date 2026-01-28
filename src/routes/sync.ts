@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 import { authPlugin } from "../middleware/auth";
-import { processSyncPush } from "../services/sync";
+import { processSyncPush, processSyncPull } from "../services/sync";
 import { handlePrismaError } from "../lib/errors";
 
 // ─── Validation schemas ──────────────────────────────────────
@@ -111,6 +111,34 @@ export const syncRoutes = new Elysia({ prefix: "/api/sync" })
 						ProductListingHistorySchema,
 					),
 				}),
+			}),
+		},
+	)
+
+	/**
+	 * POST /api/sync/pull
+	 * Download remote changes since lastSyncedAt.
+	 * If lastSyncedAt is null, returns all user data (first sync).
+	 */
+	.post(
+		"/pull",
+		async ({ user, body }) => {
+			try {
+				const result = await processSyncPull(
+					user.id,
+					body.deviceId,
+					body.lastSyncedAt,
+				);
+				return { data: result };
+			} catch (error) {
+				if (error instanceof Error && error.name === "AppError") throw error;
+				throw handlePrismaError(error);
+			}
+		},
+		{
+			body: t.Object({
+				deviceId: t.String(),
+				lastSyncedAt: t.Union([t.String(), t.Null()]),
 			}),
 		},
 	);

@@ -96,3 +96,13 @@ export interface SyncPushResponse {
 		deleted: number;
 	};
 }
+
+export interface SyncPullRequest {
+	deviceId: string;
+	lastSyncedAt: string | null; // null = first sync, pull everything
+}
+
+export interface SyncPullResponse {
+	syncedAt: string;
+	changes: SyncChanges;
+}

@@ -1,6 +1,16 @@
 import { prisma } from "../lib/prisma";
 import { Errors } from "../lib/errors";
-import type { SyncChanges, SyncPushResponse } from "../types/sync";
+import type {
+	SyncChanges,
+	SyncPushResponse,
+	SyncPullResponse,
+	TransactionRecord,
+	CategoryRecord,
+	ProductRecord,
+	StoreRecord,
+	ProductListingRecord,
+	ProductListingHistoryRecord,
+} from "../types/sync";
 import { Prisma } from "../../generated/prisma/client.js";
 
 /**
@@ -241,6 +251,198 @@ export async function processSyncPush(
 		counts: {
 			upserted: totalUpserted,
 			deleted: totalDeleted,
+		},
+	};
+}
+
+/**
+ * Process a sync pull — return all changes since lastSyncedAt.
+ * If lastSyncedAt is null, return everything (first sync).
+ */
+export async function processSyncPull(
+	userId: string,
+	deviceId: string,
+	lastSyncedAt: string | null,
+): Promise<SyncPullResponse> {
+	// Verify device belongs to user
+	const device = await prisma.device.findUnique({
+		where: { id: deviceId },
+	});
+
+	if (!device || device.userId !== userId) {
+		throw Errors.forbidden("Device does not belong to this user");
+	}
+
+	const since = lastSyncedAt ? new Date(lastSyncedAt) : null;
+
+	// Build the where clause: user's records, updated after lastSyncedAt
+	const baseWhere = (extra?: Record<string, unknown>) => ({
+		userId,
+		...(since && { updatedAt: { gt: since } }),
+		...extra,
+	});
+
+	// ─── Fetch all tables in parallel ────────────────────────
+	const [
+		transactions,
+		deletedTransactions,
+		categories,
+		deletedCategories,
+		products,
+		deletedProducts,
+		stores,
+		deletedStores,
+		productListings,
+		deletedProductListings,
+		productListingHistory,
+		deletedProductListingHistory,
+	] = await Promise.all([
+		// Active records
+		prisma.transaction.findMany({
+			where: baseWhere({ deletedAt: null }),
+		}),
+		prisma.transaction.findMany({
+			where: baseWhere({ deletedAt: { not: null } }),
+			select: { id: true },
+		}),
+
+		prisma.category.findMany({
+			where: baseWhere({ deletedAt: null }),
+		}),
+		prisma.category.findMany({
+			where: baseWhere({ deletedAt: { not: null } }),
+			select: { id: true },
+		}),
+
+		prisma.product.findMany({
+			where: baseWhere({ deletedAt: null }),
+		}),
+		prisma.product.findMany({
+			where: baseWhere({ deletedAt: { not: null } }),
+			select: { id: true },
+		}),
+
+		prisma.store.findMany({
+			where: baseWhere({ deletedAt: null }),
+		}),
+		prisma.store.findMany({
+			where: baseWhere({ deletedAt: { not: null } }),
+			select: { id: true },
+		}),
+
+		prisma.productListing.findMany({
+			where: baseWhere({ deletedAt: null }),
+		}),
+		prisma.productListing.findMany({
+			where: baseWhere({ deletedAt: { not: null } }),
+			select: { id: true },
+		}),
+
+		prisma.productListingHistory.findMany({
+			where: baseWhere({ deletedAt: null }),
+		}),
+		prisma.productListingHistory.findMany({
+			where: baseWhere({ deletedAt: { not: null } }),
+			select: { id: true },
+		}),
+	]);
+
+	// Update device last sync time
+	await prisma.device.update({
+		where: { id: deviceId },
+		data: { lastSyncAt: new Date() },
+	});
+
+	const syncedAt = new Date().toISOString();
+
+	return {
+		syncedAt,
+		changes: {
+			transactions: {
+				upserted: transactions.map(
+					(t): TransactionRecord => ({
+						id: t.id,
+						transactionTime: t.transactionTime.toISOString(),
+						amount: t.amount.toString(),
+						note: t.note,
+						transactionType: t.transactionType,
+						categoryId: t.categoryId,
+						createdAt: t.createdAt.toISOString(),
+						updatedAt: t.updatedAt?.toISOString(),
+					}),
+				),
+				deleted: deletedTransactions.map((t) => t.id),
+			},
+			categories: {
+				upserted: categories.map(
+					(c): CategoryRecord => ({
+						id: c.id,
+						name: c.name,
+						icon: c.icon,
+						color: c.color,
+						type: c.type,
+						createdAt: c.createdAt.toISOString(),
+						updatedAt: c.updatedAt?.toISOString(),
+					}),
+				),
+				deleted: deletedCategories.map((c) => c.id),
+			},
+			products: {
+				upserted: products.map(
+					(p): ProductRecord => ({
+						id: p.id,
+						name: p.name,
+						image: p.image,
+						notes: p.notes,
+						defaultUnitCategory: p.defaultUnitCategory,
+						createdAt: p.createdAt.toISOString(),
+						updatedAt: p.updatedAt?.toISOString(),
+					}),
+				),
+				deleted: deletedProducts.map((p) => p.id),
+			},
+			stores: {
+				upserted: stores.map(
+					(s): StoreRecord => ({
+						id: s.id,
+						name: s.name,
+						location: s.location,
+						createdAt: s.createdAt.toISOString(),
+						updatedAt: s.updatedAt?.toISOString(),
+					}),
+				),
+				deleted: deletedStores.map((s) => s.id),
+			},
+			productListings: {
+				upserted: productListings.map(
+					(pl): ProductListingRecord => ({
+						id: pl.id,
+						productId: pl.productId,
+						name: pl.name,
+						storeId: pl.storeId,
+						url: pl.url,
+						price: pl.price.toString(),
+						quantity: pl.quantity,
+						unit: pl.unit,
+						createdAt: pl.createdAt.toISOString(),
+						updatedAt: pl.updatedAt?.toISOString(),
+					}),
+				),
+				deleted: deletedProductListings.map((pl) => pl.id),
+			},
+			productListingHistory: {
+				upserted: productListingHistory.map(
+					(plh): ProductListingHistoryRecord => ({
+						id: plh.id,
+						productId: plh.productId,
+						productListingId: plh.productListingId,
+						price: plh.price.toString(),
+						recordedAt: plh.recordedAt.toISOString(),
+						updatedAt: plh.updatedAt?.toISOString(),
+					}),
+				),
+				deleted: deletedProductListingHistory.map((plh) => plh.id),
+			},
 		},
 	};
 }
