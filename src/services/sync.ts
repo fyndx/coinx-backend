@@ -37,216 +37,241 @@ export async function processSyncPush(
 	// Process all changes in a transaction for atomicity.
 	// Order matters! Parent tables (categories, stores, products) must be
 	// inserted before child tables (transactions, product_listings, product_listing_history).
+	// Within each table group, upserts run in parallel for speed.
 	await prisma.$transaction(async (tx) => {
 		// ─── Categories (parent — referenced by transactions) ─
-		for (const record of changes.categories.upserted) {
-			await tx.category.upsert({
-				where: { id: record.id },
-				create: {
-					id: record.id,
-					name: record.name,
-					icon: record.icon,
-					color: record.color,
-					type: record.type,
-					userId,
-					syncVersion: 1,
-				},
-				update: {
-					name: record.name,
-					icon: record.icon,
-					color: record.color,
-					type: record.type,
-					userId,
-					syncVersion: { increment: 1 },
-				},
-			});
-			totalUpserted++;
-		}
+		await Promise.all(
+			changes.categories.upserted.map((record) =>
+				tx.category.upsert({
+					where: { id: record.id },
+					create: {
+						id: record.id,
+						name: record.name,
+						icon: record.icon,
+						color: record.color,
+						type: record.type,
+						userId,
+						syncVersion: 1,
+					},
+					update: {
+						name: record.name,
+						icon: record.icon,
+						color: record.color,
+						type: record.type,
+						userId,
+						syncVersion: { increment: 1 },
+					},
+				}),
+			),
+		);
+		totalUpserted += changes.categories.upserted.length;
 
-		for (const id of changes.categories.deleted) {
-			await tx.category.updateMany({
-				where: { id, userId },
-				data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
-			});
-			totalDeleted++;
-		}
+		await Promise.all(
+			changes.categories.deleted.map((id) =>
+				tx.category.updateMany({
+					where: { id, userId },
+					data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
+				}),
+			),
+		);
+		totalDeleted += changes.categories.deleted.length;
 
 		// ─── Products ────────────────────────────────────────
-		for (const record of changes.products.upserted) {
-			await tx.product.upsert({
-				where: { id: record.id },
-				create: {
-					id: record.id,
-					name: record.name,
-					image: record.image,
-					notes: record.notes,
-					defaultUnitCategory: record.defaultUnitCategory,
-					userId,
-					syncVersion: 1,
-				},
-				update: {
-					name: record.name,
-					image: record.image,
-					notes: record.notes,
-					defaultUnitCategory: record.defaultUnitCategory,
-					userId,
-					syncVersion: { increment: 1 },
-				},
-			});
-			totalUpserted++;
-		}
+		await Promise.all(
+			changes.products.upserted.map((record) =>
+				tx.product.upsert({
+					where: { id: record.id },
+					create: {
+						id: record.id,
+						name: record.name,
+						image: record.image,
+						notes: record.notes,
+						defaultUnitCategory: record.defaultUnitCategory,
+						userId,
+						syncVersion: 1,
+					},
+					update: {
+						name: record.name,
+						image: record.image,
+						notes: record.notes,
+						defaultUnitCategory: record.defaultUnitCategory,
+						userId,
+						syncVersion: { increment: 1 },
+					},
+				}),
+			),
+		);
+		totalUpserted += changes.products.upserted.length;
 
-		for (const id of changes.products.deleted) {
-			await tx.product.updateMany({
-				where: { id, userId },
-				data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
-			});
-			totalDeleted++;
-		}
+		await Promise.all(
+			changes.products.deleted.map((id) =>
+				tx.product.updateMany({
+					where: { id, userId },
+					data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
+				}),
+			),
+		);
+		totalDeleted += changes.products.deleted.length;
 
 		// ─── Stores ──────────────────────────────────────────
-		for (const record of changes.stores.upserted) {
-			await tx.store.upsert({
-				where: { id: record.id },
-				create: {
-					id: record.id,
-					name: record.name,
-					location: record.location,
-					userId,
-					syncVersion: 1,
-				},
-				update: {
-					name: record.name,
-					location: record.location,
-					userId,
-					syncVersion: { increment: 1 },
-				},
-			});
-			totalUpserted++;
-		}
+		await Promise.all(
+			changes.stores.upserted.map((record) =>
+				tx.store.upsert({
+					where: { id: record.id },
+					create: {
+						id: record.id,
+						name: record.name,
+						location: record.location,
+						userId,
+						syncVersion: 1,
+					},
+					update: {
+						name: record.name,
+						location: record.location,
+						userId,
+						syncVersion: { increment: 1 },
+					},
+				}),
+			),
+		);
+		totalUpserted += changes.stores.upserted.length;
 
-		for (const id of changes.stores.deleted) {
-			await tx.store.updateMany({
-				where: { id, userId },
-				data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
-			});
-			totalDeleted++;
-		}
+		await Promise.all(
+			changes.stores.deleted.map((id) =>
+				tx.store.updateMany({
+					where: { id, userId },
+					data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
+				}),
+			),
+		);
+		totalDeleted += changes.stores.deleted.length;
 
 		// ─── Transactions (child — references categories) ───
-		for (const record of changes.transactions.upserted) {
-			await tx.transaction.upsert({
-				where: { id: record.id },
-				create: {
-					id: record.id,
-					transactionTime: new Date(record.transactionTime),
-					amount: new Prisma.Decimal(record.amount),
-					note: record.note,
-					transactionType: record.transactionType,
-					categoryId: record.categoryId,
-					userId,
-					syncVersion: 1,
-				},
-				update: {
-					transactionTime: new Date(record.transactionTime),
-					amount: new Prisma.Decimal(record.amount),
-					note: record.note,
-					transactionType: record.transactionType,
-					categoryId: record.categoryId,
-					userId,
-					syncVersion: { increment: 1 },
-				},
-			});
-			totalUpserted++;
-		}
+		await Promise.all(
+			changes.transactions.upserted.map((record) =>
+				tx.transaction.upsert({
+					where: { id: record.id },
+					create: {
+						id: record.id,
+						transactionTime: new Date(record.transactionTime),
+						amount: new Prisma.Decimal(record.amount),
+						note: record.note,
+						transactionType: record.transactionType,
+						categoryId: record.categoryId,
+						userId,
+						syncVersion: 1,
+					},
+					update: {
+						transactionTime: new Date(record.transactionTime),
+						amount: new Prisma.Decimal(record.amount),
+						note: record.note,
+						transactionType: record.transactionType,
+						categoryId: record.categoryId,
+						userId,
+						syncVersion: { increment: 1 },
+					},
+				}),
+			),
+		);
+		totalUpserted += changes.transactions.upserted.length;
 
-		for (const id of changes.transactions.deleted) {
-			await tx.transaction.updateMany({
-				where: { id, userId },
-				data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
-			});
-			totalDeleted++;
-		}
+		await Promise.all(
+			changes.transactions.deleted.map((id) =>
+				tx.transaction.updateMany({
+					where: { id, userId },
+					data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
+				}),
+			),
+		);
+		totalDeleted += changes.transactions.deleted.length;
 
 		// ─── Product Listings (child — references products, stores) ─
-		for (const record of changes.productListings.upserted) {
-			await tx.productListing.upsert({
-				where: { id: record.id },
-				create: {
-					id: record.id,
-					productId: record.productId,
-					name: record.name,
-					storeId: record.storeId,
-					url: record.url,
-					price: new Prisma.Decimal(record.price),
-					quantity: record.quantity,
-					unit: record.unit,
-					userId,
-					syncVersion: 1,
-				},
-				update: {
-					productId: record.productId,
-					name: record.name,
-					storeId: record.storeId,
-					url: record.url,
-					price: new Prisma.Decimal(record.price),
-					quantity: record.quantity,
-					unit: record.unit,
-					userId,
-					syncVersion: { increment: 1 },
-				},
-			});
-			totalUpserted++;
-		}
+		await Promise.all(
+			changes.productListings.upserted.map((record) =>
+				tx.productListing.upsert({
+					where: { id: record.id },
+					create: {
+						id: record.id,
+						productId: record.productId,
+						name: record.name,
+						storeId: record.storeId,
+						url: record.url,
+						price: new Prisma.Decimal(record.price),
+						quantity: record.quantity,
+						unit: record.unit,
+						userId,
+						syncVersion: 1,
+					},
+					update: {
+						productId: record.productId,
+						name: record.name,
+						storeId: record.storeId,
+						url: record.url,
+						price: new Prisma.Decimal(record.price),
+						quantity: record.quantity,
+						unit: record.unit,
+						userId,
+						syncVersion: { increment: 1 },
+					},
+				}),
+			),
+		);
+		totalUpserted += changes.productListings.upserted.length;
 
-		for (const id of changes.productListings.deleted) {
-			await tx.productListing.updateMany({
-				where: { id, userId },
-				data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
-			});
-			totalDeleted++;
-		}
+		await Promise.all(
+			changes.productListings.deleted.map((id) =>
+				tx.productListing.updateMany({
+					where: { id, userId },
+					data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
+				}),
+			),
+		);
+		totalDeleted += changes.productListings.deleted.length;
 
 		// ─── Product Listing History ─────────────────────────
-		for (const record of changes.productListingHistory.upserted) {
-			await tx.productListingHistory.upsert({
-				where: { id: record.id },
-				create: {
-					id: record.id,
-					productId: record.productId,
-					productListingId: record.productListingId,
-					price: new Prisma.Decimal(record.price),
-					recordedAt: record.recordedAt
-						? new Date(record.recordedAt)
-						: new Date(),
-					userId,
-					syncVersion: 1,
-				},
-				update: {
-					productId: record.productId,
-					productListingId: record.productListingId,
-					price: new Prisma.Decimal(record.price),
-					userId,
-					syncVersion: { increment: 1 },
-				},
-			});
-			totalUpserted++;
-		}
+		await Promise.all(
+			changes.productListingHistory.upserted.map((record) =>
+				tx.productListingHistory.upsert({
+					where: { id: record.id },
+					create: {
+						id: record.id,
+						productId: record.productId,
+						productListingId: record.productListingId,
+						price: new Prisma.Decimal(record.price),
+						recordedAt: record.recordedAt
+							? new Date(record.recordedAt)
+							: new Date(),
+						userId,
+						syncVersion: 1,
+					},
+					update: {
+						productId: record.productId,
+						productListingId: record.productListingId,
+						price: new Prisma.Decimal(record.price),
+						userId,
+						syncVersion: { increment: 1 },
+					},
+				}),
+			),
+		);
+		totalUpserted += changes.productListingHistory.upserted.length;
 
-		for (const id of changes.productListingHistory.deleted) {
-			await tx.productListingHistory.updateMany({
-				where: { id, userId },
-				data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
-			});
-			totalDeleted++;
-		}
+		await Promise.all(
+			changes.productListingHistory.deleted.map((id) =>
+				tx.productListingHistory.updateMany({
+					where: { id, userId },
+					data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
+				}),
+			),
+		);
+		totalDeleted += changes.productListingHistory.deleted.length;
 
 		// Update device last sync time
 		await tx.device.update({
 			where: { id: deviceId },
 			data: { lastSyncAt: new Date() },
 		});
-	});
+	}, { timeout: 30000 });
 
 	return {
 		syncedAt: new Date().toISOString(),
