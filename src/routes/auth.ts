@@ -14,15 +14,48 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
 		"/register",
 		async ({ user, body }) => {
 			try {
+				const email = user.email ?? body.email;
+
+				// If a profile with this email exists under a different user ID
+				// (e.g. user deleted and recreated their Supabase account),
+				// update that profile to the new user ID.
+				if (email) {
+					const existingByEmail = await prisma.profile.findUnique({
+						where: { email },
+					});
+
+					if (existingByEmail && existingByEmail.id !== user.id) {
+						// Transfer profile ownership to new Supabase user ID
+						const updated = await prisma.profile.update({
+							where: { id: existingByEmail.id },
+							data: {
+								id: user.id,
+								email,
+								...(body.displayName && { displayName: body.displayName }),
+							},
+						});
+
+						return {
+							data: {
+								id: updated.id,
+								email: updated.email,
+								displayName: updated.displayName,
+								avatarUrl: updated.avatarUrl,
+								createdAt: updated.createdAt,
+							},
+						};
+					}
+				}
+
 				const profile = await prisma.profile.upsert({
 					where: { id: user.id },
 					create: {
 						id: user.id,
-						email: user.email ?? body.email,
+						email,
 						displayName: body.displayName,
 					},
 					update: {
-						email: user.email ?? body.email,
+						email,
 						...(body.displayName && { displayName: body.displayName }),
 					},
 				});
