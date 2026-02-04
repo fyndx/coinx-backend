@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { jwtVerify } from "jose";
+import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env } from "../lib/env";
 import { Errors } from "../lib/errors";
@@ -14,17 +14,32 @@ export interface AuthUser {
 }
 
 /**
- * Verify a Supabase JWT using the JWT secret.
+ * JWKS endpoint for Supabase JWT verification.
+ * Cached automatically by jose — handles key rotation, ES256/HS256, etc.
+ */
+const getJWKS = () => {
+	if (!env.SUPABASE_URL) {
+		throw Errors.serviceUnavailable("Auth (Supabase URL not configured)");
+	}
+	return createRemoteJWKSet(
+		new URL(`${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
+	);
+};
+
+let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+
+/**
+ * Verify a Supabase JWT using the JWKS endpoint.
+ * Supports both HS256 and ES256 algorithms automatically.
  * Returns the decoded user or throws.
  */
 async function verifyToken(token: string): Promise<AuthUser> {
-	if (!env.SUPABASE_JWT_SECRET) {
-		throw Errors.serviceUnavailable("Auth (JWT secret not configured)");
+	if (!jwks) {
+		jwks = getJWKS();
 	}
 
 	try {
-		const secret = new TextEncoder().encode(env.SUPABASE_JWT_SECRET);
-		const { payload } = await jwtVerify(token, secret, {
+		const { payload } = await jwtVerify(token, jwks, {
 			issuer: `${env.SUPABASE_URL}/auth/v1`,
 		});
 
