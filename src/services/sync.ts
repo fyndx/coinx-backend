@@ -34,44 +34,11 @@ export async function processSyncPush(
 	let totalUpserted = 0;
 	let totalDeleted = 0;
 
-	// Process all changes in a transaction for atomicity
+	// Process all changes in a transaction for atomicity.
+	// Order matters! Parent tables (categories, stores, products) must be
+	// inserted before child tables (transactions, product_listings, product_listing_history).
 	await prisma.$transaction(async (tx) => {
-		// ─── Transactions ────────────────────────────────────
-		for (const record of changes.transactions.upserted) {
-			await tx.transaction.upsert({
-				where: { id: record.id },
-				create: {
-					id: record.id,
-					transactionTime: new Date(record.transactionTime),
-					amount: new Prisma.Decimal(record.amount),
-					note: record.note,
-					transactionType: record.transactionType,
-					categoryId: record.categoryId,
-					userId,
-					syncVersion: 1,
-				},
-				update: {
-					transactionTime: new Date(record.transactionTime),
-					amount: new Prisma.Decimal(record.amount),
-					note: record.note,
-					transactionType: record.transactionType,
-					categoryId: record.categoryId,
-					userId,
-					syncVersion: { increment: 1 },
-				},
-			});
-			totalUpserted++;
-		}
-
-		for (const id of changes.transactions.deleted) {
-			await tx.transaction.updateMany({
-				where: { id, userId },
-				data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
-			});
-			totalDeleted++;
-		}
-
-		// ─── Categories ──────────────────────────────────────
+		// ─── Categories (parent — referenced by transactions) ─
 		for (const record of changes.categories.upserted) {
 			await tx.category.upsert({
 				where: { id: record.id },
@@ -166,7 +133,42 @@ export async function processSyncPush(
 			totalDeleted++;
 		}
 
-		// ─── Product Listings ────────────────────────────────
+		// ─── Transactions (child — references categories) ───
+		for (const record of changes.transactions.upserted) {
+			await tx.transaction.upsert({
+				where: { id: record.id },
+				create: {
+					id: record.id,
+					transactionTime: new Date(record.transactionTime),
+					amount: new Prisma.Decimal(record.amount),
+					note: record.note,
+					transactionType: record.transactionType,
+					categoryId: record.categoryId,
+					userId,
+					syncVersion: 1,
+				},
+				update: {
+					transactionTime: new Date(record.transactionTime),
+					amount: new Prisma.Decimal(record.amount),
+					note: record.note,
+					transactionType: record.transactionType,
+					categoryId: record.categoryId,
+					userId,
+					syncVersion: { increment: 1 },
+				},
+			});
+			totalUpserted++;
+		}
+
+		for (const id of changes.transactions.deleted) {
+			await tx.transaction.updateMany({
+				where: { id, userId },
+				data: { deletedAt: new Date(), syncVersion: { increment: 1 } },
+			});
+			totalDeleted++;
+		}
+
+		// ─── Product Listings (child — references products, stores) ─
 		for (const record of changes.productListings.upserted) {
 			await tx.productListing.upsert({
 				where: { id: record.id },
