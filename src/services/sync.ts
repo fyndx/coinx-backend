@@ -13,9 +13,50 @@ import type {
 } from "../types/sync";
 import { Prisma } from "../../generated/prisma/client.js";
 
+// ─── Ownership helper ─────────────────────────────────────────
+
+/**
+ * Given incoming records and a lookup function, return only the IDs that are
+ * safe to upsert:
+ *   - IDs that don't exist yet (will be created owned by this user), OR
+ *   - IDs that already exist AND belong to this user (safe to update)
+ *
+ * IDs owned by a different user are silently dropped to prevent
+ * ownership hijacking (even though UUID collisions are astronomically unlikely,
+ * a malicious client could intentionally target a known record ID).
+ */
+async function filterSafeRecords<T extends { id: string }>(
+	records: T[],
+	findConflicts: (ids: string[]) => Promise<{ id: string }[]>,
+): Promise<T[]> {
+	if (records.length === 0) return [];
+
+	const ids = records.map((r) => r.id);
+	const conflicting = await findConflicts(ids);
+
+	if (conflicting.length === 0) return records;
+
+	const blockedIds = new Set(conflicting.map((r) => r.id));
+	return records.filter((r) => !blockedIds.has(r.id));
+}
+
+// ─── Push ─────────────────────────────────────────────────────
+
 /**
  * Process a sync push — apply all changes from client to server.
  * Strategy: Last-write-wins (upsert by ID).
+ *
+ * Security guarantees:
+ *   1. userId always comes from the verified JWT — the client cannot supply it.
+ *   2. Device ownership is verified before any writes.
+ *   3. Records already owned by a *different* user are silently skipped,
+ *      preventing ownership hijacking via crafted IDs.
+ *   4. Foreign keys (categoryId, productId, storeId, productListingId) are
+ *      validated to belong to the current user before writing.
+ *   5. Soft-deletes use updateMany({ where: { id, userId } }), so a user
+ *      can only soft-delete their own records.
+ *   6. userId is never included in the `update` block of an upsert — an
+ *      existing record's ownership cannot change.
  */
 export async function processSyncPush(
 	userId: string,
@@ -40,8 +81,17 @@ export async function processSyncPush(
 	// Within each table group, upserts run in parallel for speed.
 	await prisma.$transaction(async (tx) => {
 		// ─── Categories (parent — referenced by transactions) ─
+		const safeCategories = await filterSafeRecords(
+			changes.categories.upserted,
+			(ids) =>
+				tx.category.findMany({
+					where: { id: { in: ids }, NOT: { userId } },
+					select: { id: true },
+				}),
+		);
+
 		await Promise.all(
-			changes.categories.upserted.map((record) =>
+			safeCategories.map((record) =>
 				tx.category.upsert({
 					where: { id: record.id },
 					create: {
@@ -58,13 +108,13 @@ export async function processSyncPush(
 						icon: record.icon,
 						color: record.color,
 						type: record.type,
-						userId,
+						// userId intentionally omitted — never transfer ownership on update
 						syncVersion: { increment: 1 },
 					},
 				}),
 			),
 		);
-		totalUpserted += changes.categories.upserted.length;
+		totalUpserted += safeCategories.length;
 
 		await Promise.all(
 			changes.categories.deleted.map((id) =>
@@ -77,8 +127,17 @@ export async function processSyncPush(
 		totalDeleted += changes.categories.deleted.length;
 
 		// ─── Products ────────────────────────────────────────
+		const safeProducts = await filterSafeRecords(
+			changes.products.upserted,
+			(ids) =>
+				tx.product.findMany({
+					where: { id: { in: ids }, NOT: { userId } },
+					select: { id: true },
+				}),
+		);
+
 		await Promise.all(
-			changes.products.upserted.map((record) =>
+			safeProducts.map((record) =>
 				tx.product.upsert({
 					where: { id: record.id },
 					create: {
@@ -95,13 +154,13 @@ export async function processSyncPush(
 						image: record.image,
 						notes: record.notes,
 						defaultUnitCategory: record.defaultUnitCategory,
-						userId,
+						// userId intentionally omitted
 						syncVersion: { increment: 1 },
 					},
 				}),
 			),
 		);
-		totalUpserted += changes.products.upserted.length;
+		totalUpserted += safeProducts.length;
 
 		await Promise.all(
 			changes.products.deleted.map((id) =>
@@ -114,8 +173,17 @@ export async function processSyncPush(
 		totalDeleted += changes.products.deleted.length;
 
 		// ─── Stores ──────────────────────────────────────────
+		const safeStores = await filterSafeRecords(
+			changes.stores.upserted,
+			(ids) =>
+				tx.store.findMany({
+					where: { id: { in: ids }, NOT: { userId } },
+					select: { id: true },
+				}),
+		);
+
 		await Promise.all(
-			changes.stores.upserted.map((record) =>
+			safeStores.map((record) =>
 				tx.store.upsert({
 					where: { id: record.id },
 					create: {
@@ -128,13 +196,13 @@ export async function processSyncPush(
 					update: {
 						name: record.name,
 						location: record.location,
-						userId,
+						// userId intentionally omitted
 						syncVersion: { increment: 1 },
 					},
 				}),
 			),
 		);
-		totalUpserted += changes.stores.upserted.length;
+		totalUpserted += safeStores.length;
 
 		await Promise.all(
 			changes.stores.deleted.map((id) =>
@@ -147,11 +215,21 @@ export async function processSyncPush(
 		totalDeleted += changes.stores.deleted.length;
 
 		// ─── Transactions (child — references categories) ───
-		// Validate categoryId ownership — reject any transaction referencing
-		// a category that doesn't belong to this user.
+		// Step 1: Filter out transactions with IDs owned by another user
+		const idSafeTransactions = await filterSafeRecords(
+			changes.transactions.upserted,
+			(ids) =>
+				tx.transaction.findMany({
+					where: { id: { in: ids }, NOT: { userId } },
+					select: { id: true },
+				}),
+		);
+
+		// Step 2: Validate categoryId ownership — reject any transaction
+		// referencing a category that doesn't belong to this user.
 		const categoryIds = [
 			...new Set(
-				changes.transactions.upserted
+				idSafeTransactions
 					.map((t) => t.categoryId)
 					.filter(Boolean) as string[],
 			),
@@ -164,7 +242,7 @@ export async function processSyncPush(
 					})
 				: [];
 		const validCategorySet = new Set(validCategories.map((c) => c.id));
-		const safeTransactions = changes.transactions.upserted.filter(
+		const safeTransactions = idSafeTransactions.filter(
 			(t) => !t.categoryId || validCategorySet.has(t.categoryId),
 		);
 
@@ -188,7 +266,7 @@ export async function processSyncPush(
 						note: record.note,
 						transactionType: record.transactionType,
 						categoryId: record.categoryId,
-						userId,
+						// userId intentionally omitted
 						syncVersion: { increment: 1 },
 					},
 				}),
@@ -207,18 +285,28 @@ export async function processSyncPush(
 		totalDeleted += changes.transactions.deleted.length;
 
 		// ─── Product Listings (child — references products, stores) ─
-		// Validate productId and storeId ownership — reject any listing
+		// Step 1: Filter out listings with IDs owned by another user
+		const idSafeProductListings = await filterSafeRecords(
+			changes.productListings.upserted,
+			(ids) =>
+				tx.productListing.findMany({
+					where: { id: { in: ids }, NOT: { userId } },
+					select: { id: true },
+				}),
+		);
+
+		// Step 2: Validate productId and storeId ownership — reject any listing
 		// referencing a product or store that doesn't belong to this user.
 		const productIdsForListings = [
 			...new Set(
-				changes.productListings.upserted
+				idSafeProductListings
 					.map((pl) => pl.productId)
 					.filter(Boolean) as string[],
 			),
 		];
 		const storeIdsForListings = [
 			...new Set(
-				changes.productListings.upserted
+				idSafeProductListings
 					.map((pl) => pl.storeId)
 					.filter(Boolean) as string[],
 			),
@@ -252,7 +340,7 @@ export async function processSyncPush(
 		const validStoreSetForListings = new Set(
 			validStoresForListings.map((s) => s.id),
 		);
-		const safeProductListings = changes.productListings.upserted.filter(
+		const safeProductListings = idSafeProductListings.filter(
 			(pl) =>
 				(!pl.productId || validProductSetForListings.has(pl.productId)) &&
 				(!pl.storeId || validStoreSetForListings.has(pl.storeId)),
@@ -282,7 +370,7 @@ export async function processSyncPush(
 						price: new Prisma.Decimal(record.price),
 						quantity: record.quantity,
 						unit: record.unit,
-						userId,
+						// userId intentionally omitted
 						syncVersion: { increment: 1 },
 					},
 				}),
@@ -301,18 +389,28 @@ export async function processSyncPush(
 		totalDeleted += changes.productListings.deleted.length;
 
 		// ─── Product Listing History ─────────────────────────
-		// Validate productId and productListingId ownership — reject any
+		// Step 1: Filter out history records with IDs owned by another user
+		const idSafeProductListingHistory = await filterSafeRecords(
+			changes.productListingHistory.upserted,
+			(ids) =>
+				tx.productListingHistory.findMany({
+					where: { id: { in: ids }, NOT: { userId } },
+					select: { id: true },
+				}),
+		);
+
+		// Step 2: Validate productId and productListingId ownership — reject any
 		// history record referencing a product or listing not owned by this user.
 		const productIdsForHistory = [
 			...new Set(
-				changes.productListingHistory.upserted
+				idSafeProductListingHistory
 					.map((plh) => plh.productId)
 					.filter(Boolean) as string[],
 			),
 		];
 		const productListingIdsForHistory = [
 			...new Set(
-				changes.productListingHistory.upserted
+				idSafeProductListingHistory
 					.map((plh) => plh.productListingId)
 					.filter(Boolean) as string[],
 			),
@@ -347,7 +445,7 @@ export async function processSyncPush(
 			validProductListingsForHistory.map((pl) => pl.id),
 		);
 		const safeProductListingHistory =
-			changes.productListingHistory.upserted.filter(
+			idSafeProductListingHistory.filter(
 				(plh) =>
 					(!plh.productId || validProductSetForHistory.has(plh.productId)) &&
 					(!plh.productListingId ||
@@ -373,7 +471,7 @@ export async function processSyncPush(
 						productId: record.productId,
 						productListingId: record.productListingId,
 						price: new Prisma.Decimal(record.price),
-						userId,
+						// userId intentionally omitted
 						syncVersion: { increment: 1 },
 					},
 				}),
@@ -406,6 +504,8 @@ export async function processSyncPush(
 		},
 	};
 }
+
+// ─── Pull ─────────────────────────────────────────────────────
 
 /**
  * Process a sync pull — return all changes since lastSyncedAt.
