@@ -147,8 +147,29 @@ export async function processSyncPush(
 		totalDeleted += changes.stores.deleted.length;
 
 		// ─── Transactions (child — references categories) ───
+		// Validate categoryId ownership — reject any transaction referencing
+		// a category that doesn't belong to this user.
+		const categoryIds = [
+			...new Set(
+				changes.transactions.upserted
+					.map((t) => t.categoryId)
+					.filter(Boolean) as string[],
+			),
+		];
+		const validCategories =
+			categoryIds.length > 0
+				? await tx.category.findMany({
+						where: { id: { in: categoryIds }, userId, deletedAt: null },
+						select: { id: true },
+					})
+				: [];
+		const validCategorySet = new Set(validCategories.map((c) => c.id));
+		const safeTransactions = changes.transactions.upserted.filter(
+			(t) => !t.categoryId || validCategorySet.has(t.categoryId),
+		);
+
 		await Promise.all(
-			changes.transactions.upserted.map((record) =>
+			safeTransactions.map((record) =>
 				tx.transaction.upsert({
 					where: { id: record.id },
 					create: {
@@ -173,7 +194,7 @@ export async function processSyncPush(
 				}),
 			),
 		);
-		totalUpserted += changes.transactions.upserted.length;
+		totalUpserted += safeTransactions.length;
 
 		await Promise.all(
 			changes.transactions.deleted.map((id) =>
@@ -186,8 +207,59 @@ export async function processSyncPush(
 		totalDeleted += changes.transactions.deleted.length;
 
 		// ─── Product Listings (child — references products, stores) ─
+		// Validate productId and storeId ownership — reject any listing
+		// referencing a product or store that doesn't belong to this user.
+		const productIdsForListings = [
+			...new Set(
+				changes.productListings.upserted
+					.map((pl) => pl.productId)
+					.filter(Boolean) as string[],
+			),
+		];
+		const storeIdsForListings = [
+			...new Set(
+				changes.productListings.upserted
+					.map((pl) => pl.storeId)
+					.filter(Boolean) as string[],
+			),
+		];
+		const [validProductsForListings, validStoresForListings] =
+			await Promise.all([
+				productIdsForListings.length > 0
+					? tx.product.findMany({
+							where: {
+								id: { in: productIdsForListings },
+								userId,
+								deletedAt: null,
+							},
+							select: { id: true },
+						})
+					: [],
+				storeIdsForListings.length > 0
+					? tx.store.findMany({
+							where: {
+								id: { in: storeIdsForListings },
+								userId,
+								deletedAt: null,
+							},
+							select: { id: true },
+						})
+					: [],
+			]);
+		const validProductSetForListings = new Set(
+			validProductsForListings.map((p) => p.id),
+		);
+		const validStoreSetForListings = new Set(
+			validStoresForListings.map((s) => s.id),
+		);
+		const safeProductListings = changes.productListings.upserted.filter(
+			(pl) =>
+				(!pl.productId || validProductSetForListings.has(pl.productId)) &&
+				(!pl.storeId || validStoreSetForListings.has(pl.storeId)),
+		);
+
 		await Promise.all(
-			changes.productListings.upserted.map((record) =>
+			safeProductListings.map((record) =>
 				tx.productListing.upsert({
 					where: { id: record.id },
 					create: {
@@ -216,7 +288,7 @@ export async function processSyncPush(
 				}),
 			),
 		);
-		totalUpserted += changes.productListings.upserted.length;
+		totalUpserted += safeProductListings.length;
 
 		await Promise.all(
 			changes.productListings.deleted.map((id) =>
@@ -229,8 +301,61 @@ export async function processSyncPush(
 		totalDeleted += changes.productListings.deleted.length;
 
 		// ─── Product Listing History ─────────────────────────
+		// Validate productId and productListingId ownership — reject any
+		// history record referencing a product or listing not owned by this user.
+		const productIdsForHistory = [
+			...new Set(
+				changes.productListingHistory.upserted
+					.map((plh) => plh.productId)
+					.filter(Boolean) as string[],
+			),
+		];
+		const productListingIdsForHistory = [
+			...new Set(
+				changes.productListingHistory.upserted
+					.map((plh) => plh.productListingId)
+					.filter(Boolean) as string[],
+			),
+		];
+		const [validProductsForHistory, validProductListingsForHistory] =
+			await Promise.all([
+				productIdsForHistory.length > 0
+					? tx.product.findMany({
+							where: {
+								id: { in: productIdsForHistory },
+								userId,
+								deletedAt: null,
+							},
+							select: { id: true },
+						})
+					: [],
+				productListingIdsForHistory.length > 0
+					? tx.productListing.findMany({
+							where: {
+								id: { in: productListingIdsForHistory },
+								userId,
+								deletedAt: null,
+							},
+							select: { id: true },
+						})
+					: [],
+			]);
+		const validProductSetForHistory = new Set(
+			validProductsForHistory.map((p) => p.id),
+		);
+		const validProductListingSetForHistory = new Set(
+			validProductListingsForHistory.map((pl) => pl.id),
+		);
+		const safeProductListingHistory =
+			changes.productListingHistory.upserted.filter(
+				(plh) =>
+					(!plh.productId || validProductSetForHistory.has(plh.productId)) &&
+					(!plh.productListingId ||
+						validProductListingSetForHistory.has(plh.productListingId)),
+			);
+
 		await Promise.all(
-			changes.productListingHistory.upserted.map((record) =>
+			safeProductListingHistory.map((record) =>
 				tx.productListingHistory.upsert({
 					where: { id: record.id },
 					create: {
@@ -254,7 +379,7 @@ export async function processSyncPush(
 				}),
 			),
 		);
-		totalUpserted += changes.productListingHistory.upserted.length;
+		totalUpserted += safeProductListingHistory.length;
 
 		await Promise.all(
 			changes.productListingHistory.deleted.map((id) =>
