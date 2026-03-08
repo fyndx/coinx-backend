@@ -3,7 +3,7 @@ import { env } from "../lib/env";
 
 // Create logger with pretty printing in development, HTTP transport in production
 export const logger = pino({
-	level: env.NODE_ENV === "production" ? "info" : "debug",
+	level: env.NODE_ENV === "development" ? "debug" : "info",
 	transport:
 		env.NODE_ENV === "development"
 			? {
@@ -24,7 +24,8 @@ export const logger = pino({
 								"Content-Type": "application/json",
 							},
 							batchSize: 10,
-							retryBackoff: 1000,
+                            retries: 5,
+                            interval: 2000,
 						},
 					}
 				: undefined,
@@ -34,8 +35,13 @@ export const logger = pino({
 export type Logger = typeof logger;
 
 // Helper functions for common logging patterns
-export const logRequest = (method: string, path: string, userId?: string) => {
-	logger.info({ method, path, userId }, "Incoming request");
+export const logRequest = (
+	method: string,
+	path: string,
+	requestId: string,
+	userId?: string,
+) => {
+	logger.info({ method, path, requestId, userId }, "Incoming request");
 };
 
 export const logResponse = (
@@ -43,8 +49,9 @@ export const logResponse = (
 	path: string,
 	status: number,
 	duration: number,
+	requestId: string,
 ) => {
-	logger.info({ method, path, status, duration }, "Response sent");
+	logger.info({ method, path, status, duration, requestId }, "Response sent");
 };
 
 export const logError = (error: Error, context?: Record<string, unknown>) => {

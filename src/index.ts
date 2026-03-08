@@ -7,9 +7,11 @@ import { env } from "./lib/env";
 import { AppError } from "./lib/errors";
 import { errorTracking } from "./services/error-tracking";
 import { logger, logError } from "./services/logger";
+import { requestIdMiddleware } from "./middleware/requestId";
+import { prisma } from "./lib/prisma";
 
 // Initialize error tracking (Better Stack via Sentry SDK)
-errorTracking.initialize(env.SENTRY_DSN, env.NODE_ENV);
+errorTracking.initialize();
 
 const app = new Elysia()
 	.use(
@@ -19,41 +21,45 @@ const app = new Elysia()
 			allowedHeaders: ["Content-Type", "Authorization"],
 		}),
 	)
+	// Add request ID correlation
+	.use(requestIdMiddleware)
 	// Request/Response logging
-	.onRequest(({ request }) => {
-		const start = Date.now();
+	.onRequest((context) => {
+		const { request, requestId, store } = context as typeof context & { requestId: string };
 		logger.info(
 			{
 				method: request.method,
 				path: new URL(request.url).pathname,
+				requestId,
 			},
 			"Incoming request",
 		);
 		// Store start time for response logging
-		request.headers.set("x-request-start", start.toString());
+		(store as { requestStart?: number }).requestStart = Date.now();
 	})
-	.onAfterResponse(({ request, set }) => {
-		const start = Number.parseInt(
-			request.headers.get("x-request-start") || "0",
-		);
-		const duration = Date.now() - start;
+	.onAfterResponse((context) => {
+		const { request, set, requestId, store } = context as typeof context & { requestId: string };
+		const duration = Date.now() - ((store as { requestStart?: number }).requestStart || Date.now());
 		logger.info(
 			{
 				method: request.method,
 				path: new URL(request.url).pathname,
 				status: set.status,
 				duration: `${duration}ms`,
+				requestId,
 			},
 			"Response sent",
 		);
 	})
 	// Global error handler — catches all unhandled errors
-	.onError(({ code, error, set, request }) => {
+	.onError((context) => {
+		const { code, error, set, request, requestId } = context as typeof context & { requestId: string };
 		// ElysiaJS validation errors
 		if (code === "VALIDATION") {
 			logger.warn(
 				{
 					path: new URL(request.url).pathname,
+					requestId,
 					error: error.message,
 				},
 				"Validation error",
@@ -77,6 +83,7 @@ const app = new Elysia()
 					code: error.code,
 					status: error.status,
 					path: new URL(request.url).pathname,
+					requestId,
 				},
 				error.message,
 			);
@@ -87,7 +94,7 @@ const app = new Elysia()
 		// ElysiaJS NOT_FOUND (route not found)
 		if (code === "NOT_FOUND") {
 			logger.warn(
-				{ path: new URL(request.url).pathname },
+				{ path: new URL(request.url).pathname, requestId },
 				"Route not found",
 			);
 			set.status = 404;
@@ -100,12 +107,17 @@ const app = new Elysia()
 			};
 		}
 
-		// Unexpected errors — log full details, send to error tracking, return generic message
-		logError(error as Error, {
+		// Unexpected errors — log full details, send to error tracking with rich context
+		const errorContext = {
 			code,
 			path: new URL(request.url).pathname,
-		});
-		errorTracking.captureException(error);
+			requestId,
+			method: request.method,
+			userAgent: request.headers.get("user-agent") || undefined,
+		};
+		
+		logError(error as Error, errorContext);
+		errorTracking.captureException(error, errorContext);
 		set.status = 500;
 		return {
 			error: {
@@ -128,5 +140,43 @@ logger.info(
 	},
 	"🪙 CoinX Backend started",
 );
+
+// Graceful shutdown handling
+const gracefulShutdown = async (signal: string) => {
+	logger.info({ signal }, "Received shutdown signal, starting graceful shutdown...");
+
+	try {
+		// Stop accepting new connections
+		app.server?.stop();
+		logger.info("Server stopped accepting new connections");
+
+		// Close database connections
+		await prisma.$disconnect();
+		logger.info("Database connections closed");
+
+		logger.info("Graceful shutdown completed");
+		process.exit(0);
+	} catch (error) {
+		logger.error({ err: error }, "Error during graceful shutdown");
+		process.exit(1);
+	}
+};
+
+// Listen for termination signals
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// Handle uncaught errors
+process.on("uncaughtException", (error) => {
+	logger.error({ err: error }, "Uncaught exception");
+	errorTracking.captureException(error);
+	gracefulShutdown("uncaughtException");
+});
+
+process.on("unhandledRejection", (reason) => {
+	logger.error({ err: reason }, "Unhandled promise rejection");
+	errorTracking.captureException(reason as Error);
+	gracefulShutdown("unhandledRejection");
+});
 
 export type App = typeof app;
