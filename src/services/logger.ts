@@ -1,55 +1,52 @@
 import pino from "pino";
 import { env } from "../lib/env";
 
-const createDevelopmentTransport = () => ({
-	target: "pino-pretty",
-	options: {
-		colorize: true,
-		translateTime: "HH:MM:ss Z",
-		ignore: "pid,hostname",
-	},
-});
-
-const createProductionTransport = () => {
-	if (env.BETTERSTACK_SOURCE_TOKEN) {
-		return {
-			target: "pino-http-send",
-			options: {
-				url: "https://in.logs.betterstack.com",
-				headers: {
-					Authorization: `Bearer ${env.BETTERSTACK_SOURCE_TOKEN}`,
-					"Content-Type": "application/json",
-				},
-				batchSize: 10,
-				retries: 3,
-				interval: 5000,
-				timeout: 10000,
-				// Silently fail if Better Stack is unreachable
-				errorHandler: (err: Error) => {
-					console.error("Better Stack logging error:", err.message);
-				},
-			},
-		};
-	}
-	return undefined; // Fallback to default JSON logging to stdout
-}
-
+// Create transport configuration based on environment
 const createTransport = () => {
 	if (env.NODE_ENV === "development") {
-		return createDevelopmentTransport();
-	} else {
-		return createProductionTransport();
+		// Development: pretty printing only
+		return pino.transport({
+			target: "pino-pretty",
+			options: {
+				colorize: true,
+				translateTime: "HH:MM:ss Z",
+				ignore: "pid,hostname",
+			},
+		});
 	}
-}
 
-const logLevel = env.NODE_ENV === "development" ? "debug" : "info";
-const transport = createTransport();
+	// Production: multiple targets
+	const targets: pino.TransportTargetOptions[] = [];
 
-// Create logger with pretty printing in development, direct HTTP to Better Stack in production
-export const logger = pino({
-	level: logLevel,
-	transport: transport,
-});
+	// Always log to stdout in production (for Coolify/Docker logs)
+	targets.push({
+		target: "pino/file",
+		options: { destination: 1 }, // 1 = stdout
+		level: "info",
+	});
+
+	// Add Better Stack if token is configured
+	if (env.BETTERSTACK_SOURCE_TOKEN) {
+		targets.push({
+			target: "@logtail/pino",
+			options: {
+				sourceToken: env.BETTERSTACK_SOURCE_TOKEN,
+			},
+			level: "info",
+		});
+	}
+
+	return pino.transport({ targets });
+};
+
+// Create logger with appropriate transport
+export const logger = pino(
+	{
+		level: env.NODE_ENV === "development" ? "debug" : "info",
+		timestamp: pino.stdTimeFunctions.isoTime,
+	},
+	createTransport(),
+);
 
 // Type-safe logger methods
 export type Logger = typeof logger;
