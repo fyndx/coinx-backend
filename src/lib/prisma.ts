@@ -15,8 +15,25 @@ const globalForPrisma = globalThis as unknown as {
 	prisma: PrismaClient | undefined;
 };
 
+// Configure logging based on environment
+const logConfig =
+	env.NODE_ENV === "development"
+		? [
+				{ level: "query" as const, emit: "stdout" as const },
+				{ level: "error" as const, emit: "stdout" as const },
+				{ level: "warn" as const, emit: "stdout" as const },
+			]
+		: [
+				{ level: "error" as const, emit: "stdout" as const },
+				{ level: "warn" as const, emit: "stdout" as const },
+			];
+
 export const prisma =
-	globalForPrisma.prisma ?? new PrismaClient({ adapter });
+	globalForPrisma.prisma ??
+	new PrismaClient({
+		adapter,
+		log: logConfig,
+	});
 
 if (process.env.NODE_ENV !== "production") {
 	globalForPrisma.prisma = prisma;
