@@ -142,7 +142,7 @@ logger.info(
 );
 
 // Graceful shutdown handling
-const gracefulShutdown = async (signal: string) => {
+const gracefulShutdown = async (signal: string, isErrorShutdown = false) => {
 	logger.info({ signal }, "Received shutdown signal, starting graceful shutdown...");
 
 	try {
@@ -155,7 +155,7 @@ const gracefulShutdown = async (signal: string) => {
 		logger.info("Database connections closed");
 
 		logger.info("Graceful shutdown completed");
-		process.exit(0);
+		process.exit(isErrorShutdown ? 1 : 0);
 	} catch (error) {
 		logger.error({ err: error }, "Error during graceful shutdown");
 		process.exit(1);
@@ -170,13 +170,13 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("uncaughtException", (error) => {
 	logger.error({ err: error }, "Uncaught exception");
 	errorTracking.captureException(error);
-	gracefulShutdown("uncaughtException");
+	gracefulShutdown("uncaughtException", true);
 });
 
 process.on("unhandledRejection", (reason) => {
 	logger.error({ err: reason }, "Unhandled promise rejection");
 	errorTracking.captureException(reason as Error);
-	gracefulShutdown("unhandledRejection");
+	gracefulShutdown("unhandledRejection", true);
 });
 
 export type App = typeof app;
