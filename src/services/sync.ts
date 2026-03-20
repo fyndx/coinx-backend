@@ -12,6 +12,7 @@ import type {
 	ProductListingHistoryRecord,
 } from "../types/sync";
 import { Prisma } from "../../generated/prisma/client.js";
+import { logger } from "./logger";
 
 // ─── Ownership helper ─────────────────────────────────────────
 
@@ -28,6 +29,7 @@ import { Prisma } from "../../generated/prisma/client.js";
 async function filterSafeRecords<T extends { id: string }>(
 	records: T[],
 	findConflicts: (ids: string[]) => Promise<{ id: string }[]>,
+	tableName?: string,
 ): Promise<T[]> {
 	if (records.length === 0) return [];
 
@@ -37,7 +39,20 @@ async function filterSafeRecords<T extends { id: string }>(
 	if (conflicting.length === 0) return records;
 
 	const blockedIds = new Set(conflicting.map((r) => r.id));
-	return records.filter((r) => !blockedIds.has(r.id));
+	const filtered = records.filter((r) => !blockedIds.has(r.id));
+	
+	if (conflicting.length > 0) {
+		logger.warn(
+			{
+				table: tableName,
+				blockedCount: conflicting.length,
+				blockedIds: Array.from(blockedIds),
+			},
+			"Records filtered due to ownership conflict",
+		);
+	}
+	
+	return filtered;
 }
 
 // ─── Push ─────────────────────────────────────────────────────
@@ -63,6 +78,41 @@ export async function processSyncPush(
 	deviceId: string,
 	changes: SyncChanges,
 ): Promise<SyncPushResponse> {
+	// Log incoming sync push request
+	logger.info(
+		{
+			userId,
+			deviceId,
+			changeCounts: {
+				transactions: {
+					upserted: changes.transactions.upserted.length,
+					deleted: changes.transactions.deleted.length,
+				},
+				categories: {
+					upserted: changes.categories.upserted.length,
+					deleted: changes.categories.deleted.length,
+				},
+				products: {
+					upserted: changes.products.upserted.length,
+					deleted: changes.products.deleted.length,
+				},
+				stores: {
+					upserted: changes.stores.upserted.length,
+					deleted: changes.stores.deleted.length,
+				},
+				productListings: {
+					upserted: changes.productListings.upserted.length,
+					deleted: changes.productListings.deleted.length,
+				},
+				productListingHistory: {
+					upserted: changes.productListingHistory.upserted.length,
+					deleted: changes.productListingHistory.deleted.length,
+				},
+			},
+		},
+		"Processing sync push",
+	);
+
 	// Verify device belongs to user
 	const device = await prisma.device.findUnique({
 		where: { id: deviceId },
@@ -88,6 +138,7 @@ export async function processSyncPush(
 					where: { id: { in: ids }, NOT: { userId } },
 					select: { id: true },
 				}),
+			"categories",
 		);
 
 		await Promise.all(
@@ -134,6 +185,7 @@ export async function processSyncPush(
 					where: { id: { in: ids }, NOT: { userId } },
 					select: { id: true },
 				}),
+			"products",
 		);
 
 		await Promise.all(
@@ -180,6 +232,7 @@ export async function processSyncPush(
 					where: { id: { in: ids }, NOT: { userId } },
 					select: { id: true },
 				}),
+			"stores",
 		);
 
 		await Promise.all(
@@ -223,6 +276,7 @@ export async function processSyncPush(
 					where: { id: { in: ids }, NOT: { userId } },
 					select: { id: true },
 				}),
+			"transactions",
 		);
 
 		// Step 2: Validate categoryId ownership — reject any transaction
@@ -245,6 +299,22 @@ export async function processSyncPush(
 		const safeTransactions = idSafeTransactions.filter(
 			(t) => !t.categoryId || validCategorySet.has(t.categoryId),
 		);
+		
+		// Log transactions filtered out due to invalid categoryId
+		const filteredByCategory = idSafeTransactions.length - safeTransactions.length;
+		if (filteredByCategory > 0) {
+			const invalidCategoryIds = idSafeTransactions
+				.filter((t) => t.categoryId && !validCategorySet.has(t.categoryId))
+				.map((t) => ({ transactionId: t.id, categoryId: t.categoryId }));
+			logger.warn(
+				{
+					filteredCount: filteredByCategory,
+					invalidReferences: invalidCategoryIds,
+					validCategories: Array.from(validCategorySet),
+				},
+				"Transactions filtered due to invalid categoryId references",
+			);
+		}
 
 		await Promise.all(
 			safeTransactions.map((record) =>
@@ -293,6 +363,7 @@ export async function processSyncPush(
 					where: { id: { in: ids }, NOT: { userId } },
 					select: { id: true },
 				}),
+			"product_listings",
 		);
 
 		// Step 2: Validate productId and storeId ownership — reject any listing
@@ -345,6 +416,15 @@ export async function processSyncPush(
 				(!pl.productId || validProductSetForListings.has(pl.productId)) &&
 				(!pl.storeId || validStoreSetForListings.has(pl.storeId)),
 		);
+		
+		// Log product listings filtered out due to invalid foreign keys
+		const filteredListings = idSafeProductListings.length - safeProductListings.length;
+		if (filteredListings > 0) {
+			logger.warn(
+				{ filteredCount: filteredListings },
+				"Product listings filtered due to invalid productId or storeId references",
+			);
+		}
 
 		await Promise.all(
 			safeProductListings.map((record) =>
@@ -397,6 +477,7 @@ export async function processSyncPush(
 					where: { id: { in: ids }, NOT: { userId } },
 					select: { id: true },
 				}),
+			"product_listing_history",
 		);
 
 		// Step 2: Validate productId and productListingId ownership — reject any
@@ -451,6 +532,15 @@ export async function processSyncPush(
 					(!plh.productListingId ||
 						validProductListingSetForHistory.has(plh.productListingId)),
 			);
+		
+		// Log history records filtered out due to invalid foreign keys
+		const filteredHistory = idSafeProductListingHistory.length - safeProductListingHistory.length;
+		if (filteredHistory > 0) {
+			logger.warn(
+				{ filteredCount: filteredHistory },
+				"Product listing history filtered due to invalid foreign key references",
+			);
+		}
 
 		await Promise.all(
 			safeProductListingHistory.map((record) =>
@@ -496,13 +586,24 @@ export async function processSyncPush(
 		});
 	}, { timeout: 30000 });
 
-	return {
+	const result = {
 		syncedAt: new Date().toISOString(),
 		counts: {
 			upserted: totalUpserted,
 			deleted: totalDeleted,
 		},
 	};
+
+	logger.info(
+		{
+			userId,
+			deviceId,
+			result,
+		},
+		"Sync push completed",
+	);
+
+	return result;
 }
 
 // ─── Pull ─────────────────────────────────────────────────────
