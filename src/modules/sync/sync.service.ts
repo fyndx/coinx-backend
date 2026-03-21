@@ -1,5 +1,5 @@
-import { prisma } from "../lib/prisma";
-import { Errors } from "../lib/errors";
+import { prisma } from "../../common/services/prisma";
+import { Errors } from "../../common/errors";
 import type {
 	SyncChanges,
 	SyncPushResponse,
@@ -10,10 +10,10 @@ import type {
 	StoreRecord,
 	ProductListingRecord,
 	ProductListingHistoryRecord,
-} from "../types/sync";
-import { Prisma } from "../../generated/prisma/client.js";
+} from "./sync.model";
+import { Prisma } from "../../../generated/prisma/client.js";
 import { useLogger } from "evlog/elysia";
-import { logger } from "./logger";
+import { logger } from "../../common/services/logger";
 
 // ─── Ownership helper ─────────────────────────────────────────
 

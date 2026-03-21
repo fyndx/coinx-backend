@@ -1,5 +1,5 @@
 import pino from "pino";
-import { env } from "../lib/env";
+import { env } from "../env";
 
 // Create transport configuration based on environment
 const createTransport = () => {

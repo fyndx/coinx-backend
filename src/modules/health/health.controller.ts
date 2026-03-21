@@ -1,8 +1,8 @@
 import { Elysia } from "elysia";
-import { prisma } from "../lib/prisma";
+import { prisma } from "../../common/services/prisma";
 import { useLogger } from "evlog/elysia";
 
-export const healthRoutes = new Elysia({ prefix: "/api" }).get(
+export const healthController = new Elysia({ prefix: "/api" }).get(
 	"/health",
 	async ({ set }) => {
 		const log = useLogger();
