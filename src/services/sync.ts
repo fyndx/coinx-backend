@@ -12,6 +12,7 @@ import type {
 	ProductListingHistoryRecord,
 } from "../types/sync";
 import { Prisma } from "../../generated/prisma/client.js";
+import { useLogger } from "evlog/elysia";
 import { logger } from "./logger";
 
 // ─── Ownership helper ─────────────────────────────────────────
@@ -42,14 +43,14 @@ async function filterSafeRecords<T extends { id: string }>(
 	const filtered = records.filter((r) => !blockedIds.has(r.id));
 	
 	if (conflicting.length > 0) {
-		logger.warn(
-			{
+		// Enrich the request-scoped wide event with conflict details
+		useLogger().set({
+			ownershipConflicts: {
 				table: tableName,
 				blockedCount: conflicting.length,
 				blockedIds: Array.from(blockedIds),
 			},
-			"Records filtered due to ownership conflict",
-		);
+		});
 	}
 	
 	return filtered;

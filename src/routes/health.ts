@@ -1,9 +1,11 @@
 import { Elysia } from "elysia";
 import { prisma } from "../lib/prisma";
+import { useLogger } from "evlog/elysia";
 
 export const healthRoutes = new Elysia({ prefix: "/api" }).get(
 	"/health",
 	async ({ set }) => {
+		const log = useLogger();
 		let dbStatus: "connected" | "disconnected" | "error" = "disconnected";
 		let dbLatencyMs: number | null = null;
 
@@ -18,6 +20,9 @@ export const healthRoutes = new Elysia({ prefix: "/api" }).get(
 		}
 
 		const healthy = dbStatus === "connected";
+
+		// Attach DB diagnostics to the wide event
+		log.set({ db: { status: dbStatus, latencyMs: dbLatencyMs, healthy } });
 
 		if (!healthy) {
 			set.status = 503;

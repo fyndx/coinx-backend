@@ -2,6 +2,16 @@ import { Elysia, t } from "elysia";
 import { authPlugin } from "../middleware/auth";
 import { processSyncPush, processSyncPull } from "../services/sync";
 import { handlePrismaError } from "../lib/errors";
+import type { SyncPullResponse } from "../types/sync";
+import { useLogger } from "evlog/elysia";
+
+// Sums total records returned in a pull response for logging
+function countSyncRecords(result: SyncPullResponse): number {
+	return Object.values(result.changes).reduce(
+		(sum, changeSet) => sum + changeSet.upserted.length + changeSet.deleted.length,
+		0,
+	);
+}
 
 // ─── Validation schemas ──────────────────────────────────────
 
@@ -85,12 +95,22 @@ export const syncRoutes = new Elysia({ prefix: "/api/sync" })
 	.post(
 		"/push",
 		async ({ user, body }) => {
+			const log = useLogger();
+			// Build a compact summary of what's being pushed
+			const changeSummary = Object.fromEntries(
+				Object.entries(body.changes).map(([key, val]) => [
+					key,
+					{ upserted: val.upserted.length, deleted: val.deleted.length },
+				]),
+			);
+			log.set({ sync: { deviceId: body.deviceId, changes: changeSummary } });
 			try {
 				const result = await processSyncPush(
 					user.id,
 					body.deviceId,
 					body.changes,
 				);
+				log.set({ sync: { result } });
 				return { data: result };
 			} catch (error) {
 				if (error instanceof Error && error.name === "AppError") throw error;
@@ -123,12 +143,21 @@ export const syncRoutes = new Elysia({ prefix: "/api/sync" })
 	.post(
 		"/pull",
 		async ({ user, body }) => {
+			const log = useLogger();
+			log.set({
+				sync: {
+					deviceId: body.deviceId,
+					lastSyncedAt: body.lastSyncedAt,
+					isFirstSync: body.lastSyncedAt === null,
+				},
+			});
 			try {
 				const result = await processSyncPull(
 					user.id,
 					body.deviceId,
 					body.lastSyncedAt,
 				);
+				log.set({ sync: { recordCount: countSyncRecords(result) } });
 				return { data: result };
 			} catch (error) {
 				if (error instanceof Error && error.name === "AppError") throw error;

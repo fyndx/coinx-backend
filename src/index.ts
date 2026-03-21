@@ -1,5 +1,7 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
+import { initLogger } from "evlog";
+import { evlog } from "evlog/elysia";
 import { healthRoutes } from "./routes/health";
 import { authRoutes } from "./routes/auth";
 import { syncRoutes } from "./routes/sync";
@@ -13,12 +15,29 @@ import { prisma } from "./lib/prisma";
 // Initialize error tracking (Better Stack via Sentry SDK)
 errorTracking.initialize();
 
+// Initialize evlog — sets service name used in all structured log events
+initLogger({ env: { service: "coinx-backend" } });
+
 const app = new Elysia()
 	.use(
 		cors({
 			origin: true, // Allow all origins during development
 			methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
 			allowedHeaders: ["Content-Type", "Authorization"],
+		}),
+	)
+	// Structured request-scoped logging via evlog — one wide event per request
+	.use(
+		evlog({
+			include: ["/api/**"],
+			// Force-retain slow requests and errors regardless of any head sampling
+			keep: (ctx) => {
+				if (ctx.duration && ctx.duration > 2000) ctx.shouldKeep = true;
+			},
+			// Enrich every event with the runtime environment
+			enrich: (ctx) => {
+				ctx.event.environment = env.NODE_ENV;
+			},
 		}),
 	)
 	// Add request ID correlation

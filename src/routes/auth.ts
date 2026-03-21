@@ -2,6 +2,7 @@ import { Elysia, t } from "elysia";
 import { authPlugin } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { Errors, handlePrismaError } from "../lib/errors";
+import { useLogger } from "evlog/elysia";
 
 export const authRoutes = new Elysia({ prefix: "/api/auth" })
 	/**
@@ -13,6 +14,8 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
 	.post(
 		"/register",
 		async ({ user, body }) => {
+			const log = useLogger();
+			log.set({ user: { id: user.id } });
 			try {
 				const email = user.email ?? body.email;
 
@@ -86,6 +89,8 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
 	 * Get current user profile + registered devices.
 	 */
 	.get("/profile", async ({ user }) => {
+		const log = useLogger();
+		log.set({ user: { id: user.id } });
 		try {
 			const profile = await prisma.profile.findUnique({
 				where: { id: user.id },
@@ -99,6 +104,8 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
 			if (!profile) {
 				throw Errors.notFound("Profile");
 			}
+
+			log.set({ profile: { deviceCount: profile.devices.length } });
 
 			return {
 				data: {
