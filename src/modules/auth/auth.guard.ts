@@ -1,8 +1,8 @@
 import { Elysia } from "elysia";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { env } from "../lib/env";
-import { Errors } from "../lib/errors";
+import { env } from "../../common/env";
+import { Errors } from "../../common/errors";
 
 /**
  * Decoded JWT payload from Supabase Auth.

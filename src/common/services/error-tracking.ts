@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/bun";
-import { env } from "../lib/env";
+import { env } from "../env";
 import { logger } from "./logger";
 
 export interface ErrorTrackingService {

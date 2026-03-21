@@ -1,8 +1,8 @@
 import { Elysia, t } from "elysia";
-import { authPlugin } from "../middleware/auth";
-import { processSyncPush, processSyncPull } from "../services/sync";
-import { handlePrismaError } from "../lib/errors";
-import type { SyncPullResponse } from "../types/sync";
+import { authPlugin } from "../auth/auth.guard";
+import { processSyncPush, processSyncPull } from "./sync.service";
+import { handlePrismaError } from "../../common/errors";
+import type { SyncPullResponse } from "./sync.model";
 import { useLogger } from "evlog/elysia";
 
 // Sums total records returned in a pull response for logging
@@ -84,7 +84,7 @@ const ChangeSetSchema = <T extends ReturnType<typeof t.Object>>(schema: T) =>
 
 // ─── Routes ──────────────────────────────────────────────────
 
-export const syncRoutes = new Elysia({ prefix: "/api/sync" })
+export const syncController = new Elysia({ prefix: "/api/sync" })
 	.use(authPlugin)
 
 	/**

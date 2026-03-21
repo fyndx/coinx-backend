@@ -2,15 +2,15 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { initLogger } from "evlog";
 import { evlog } from "evlog/elysia";
-import { healthRoutes } from "./routes/health";
-import { authRoutes } from "./routes/auth";
-import { syncRoutes } from "./routes/sync";
-import { env } from "./lib/env";
-import { AppError } from "./lib/errors";
-import { errorTracking } from "./services/error-tracking";
-import { logger, logError } from "./services/logger";
-import { requestIdMiddleware } from "./middleware/requestId";
-import { prisma } from "./lib/prisma";
+import { healthController } from "./modules/health";
+import { authController } from "./modules/auth";
+import { syncController } from "./modules/sync";
+import { env } from "./common/env";
+import { AppError } from "./common/errors";
+import { errorTracking } from "./common/services/error-tracking";
+import { logger, logError } from "./common/services/logger";
+import { requestIdMiddleware } from "./common/middleware/request-id.middleware";
+import { prisma } from "./common/services/prisma";
 
 // Initialize error tracking (Better Stack via Sentry SDK)
 errorTracking.initialize();
@@ -146,9 +146,9 @@ const app = new Elysia()
 			},
 		};
 	})
-	.use(healthRoutes)
-	.use(authRoutes)
-	.use(syncRoutes)
+	.use(healthController)
+	.use(authController)
+	.use(syncController)
 	.listen(env.PORT);
 
 logger.info(

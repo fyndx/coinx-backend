@@ -1,10 +1,10 @@
 import { Elysia, t } from "elysia";
-import { authPlugin } from "../middleware/auth";
-import { prisma } from "../lib/prisma";
-import { Errors, handlePrismaError } from "../lib/errors";
+import { authPlugin } from "./auth.guard";
+import { prisma } from "../../common/services/prisma";
+import { Errors, handlePrismaError } from "../../common/errors";
 import { useLogger } from "evlog/elysia";
 
-export const authRoutes = new Elysia({ prefix: "/api/auth" })
+export const authController = new Elysia({ prefix: "/api/auth" })
 	/**
 	 * POST /api/auth/register
 	 * Create or update profile in our DB after Supabase signup.
